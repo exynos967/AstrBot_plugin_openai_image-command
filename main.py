@@ -9,7 +9,7 @@ from .utils.ttp import generate_image_openai
 from .utils.file_send_server import send_file
 
 
-@register("astrbot_plugin_openai_image-command", "薄暝", "使用 OpenAI 的图片接口生成图片", "2.1.0")
+@register("astrbot_plugin_openai_image-command", "薄暝", "使用 OpenAI 的图片接口生成图片", "2.2.0")
 class MyPlugin(Star):
     def __init__(self, context: Context, config: dict):
         super().__init__(context)
@@ -39,7 +39,7 @@ class MyPlugin(Star):
         self.rate_limit_period_seconds = int(config.get("rate_limit_period_seconds", 60) or 60)
 
         # 限流状态：group_id -> (window_start_ts, count)
-        self._rate_limit_state = {}
+        self._rate_limit_state: dict[str, tuple[float, int]] = {}
         self._rate_limit_lock = asyncio.Lock()
 
         # 标记是否已经加载过全局配置
@@ -290,6 +290,37 @@ class MyPlugin(Star):
             self._rate_limit_state[gid] = (window_start, count)
             return True
 
+    async def _collect_input_images(self, event: AstrMessageEvent) -> list[str]:
+        """
+        从当前事件中收集图片（包含直接发送的图片和引用消息中的图片）。
+        返回 base64 字符串列表。
+        """
+        images: list[str] = []
+
+        if hasattr(event, "message_obj") and event.message_obj and hasattr(event.message_obj, "message"):
+            for comp in event.message_obj.message:
+                if isinstance(comp, Image):
+                    try:
+                        base64_data = await comp.convert_to_base64()
+                        images.append(base64_data)
+                    except (IOError, ValueError, OSError) as e:
+                        logger.warning(f"转换图片到base64失败: {e}")
+                    except Exception as e:
+                        logger.error(f"处理图片时出现未预期的错误: {e}")
+                elif isinstance(comp, Reply) and comp.chain:
+                    for reply_comp in comp.chain:
+                        if isinstance(reply_comp, Image):
+                            try:
+                                base64_data = await reply_comp.convert_to_base64()
+                                images.append(base64_data)
+                                logger.info("从引用消息中获取到图片")
+                            except (IOError, ValueError, OSError) as e:
+                                logger.warning(f"转换引用消息中的图片到base64失败: {e}")
+                            except Exception as e:
+                                logger.error(f"处理引用消息中的图片时出现未预期的错误: {e}")
+
+        return images
+
     @filter.command("生图")
     async def generate_image_command(
         self,
@@ -303,14 +334,13 @@ class MyPlugin(Star):
         if not await self._check_and_consume_rate_limit(event):
             yield event.plain_result("本群本周期内的插件调用次数已达上限，请稍后再试。")
             return
+
         # NAP 文件转发配置
         nap_server_address = self.nap_server_address
         nap_server_port = self.nap_server_port
 
         if not image_description:
-            # 如果没有显式参数，则从整条消息中提取指令后的文本
             raw = getattr(event, "message_str", "") or ""
-            # message_str 形如 "生图 小猫咪"，去掉指令名
             parts = raw.strip().split(" ", 1)
             if len(parts) == 2:
                 image_description = parts[1].strip()
@@ -318,13 +348,13 @@ class MyPlugin(Star):
                 image_description = ""
 
         if not image_description:
-            yield event.plain_result("请提供要生成图像的文字描述，例如：/生图 一只坐在键盘上的橙色猫，赛博朋克风格。")
+            yield event.plain_result(
+                "请提供要生成图像的文字描述，例如：/生图 一只坐在键盘上的橙色猫，赛博朋克风格。"
+            )
             return
 
-        # 生图指令忽略消息中的图片，仅使用文本提示词
         input_images: list = []
 
-        # 调用生成图像的函数
         try:
             image_url, image_path = await self._generate_image_via_provider(
                 image_description,
@@ -332,40 +362,33 @@ class MyPlugin(Star):
             )
 
             if not image_url or not image_path:
-                # 生成失败，发送错误消息
                 error_chain = [Plain("图像生成失败，请检查API配置和网络连接。")]
                 yield event.chain_result(error_chain)
                 return
 
-            # 处理文件传输和图片发送
             if self.nap_server_address and self.nap_server_address != "localhost":
                 image_path = await send_file(image_path, HOST=nap_server_address, PORT=nap_server_port)
 
-            # 使用新的发送方法，优先使用callback_api_base
             image_component = await self.send_image_with_callback_api(image_path)
             chain = [image_component]
             yield event.chain_result(chain)
-            return
 
         except (ConnectionError, TimeoutError) as e:
             logger.error(f"网络连接错误导致图像生成失败: {e}")
             error_chain = [Plain(f"网络连接错误，图像生成失败: {str(e)}")]
             yield event.chain_result(error_chain)
-            return
         except ValueError as e:
             logger.error(f"参数错误导致图像生成失败: {e}")
             error_chain = [Plain(f"参数错误，图像生成失败: {str(e)}")]
             yield event.chain_result(error_chain)
-            return
         except Exception as e:
             logger.error(f"图像生成过程出现未预期的错误: {e}")
             error_chain = [Plain(f"图像生成失败: {str(e)}")]
             yield event.chain_result(error_chain)
-            return
 
     @filter.command("手办化")
     async def figure_transform(self, event: AstrMessageEvent):
-        """将用户提供的图片转换为手办效果
+        """将用户提供的图片转换为手办效果。
 
         使用方法：发送图片并使用 /手办化 指令
         """
@@ -375,33 +398,9 @@ class MyPlugin(Star):
         if not await self._check_and_consume_rate_limit(event):
             yield event.plain_result("本群本周期内的插件调用次数已达上限，请稍后再试。")
             return
-        # 检查消息中是否包含图片
-        input_images = []
-        if hasattr(event, "message_obj") and event.message_obj and hasattr(event.message_obj, "message"):
-            for comp in event.message_obj.message:
-                if isinstance(comp, Image):
-                    try:
-                        base64_data = await comp.convert_to_base64()
-                        input_images.append(base64_data)
-                    except (IOError, ValueError, OSError) as e:
-                        logger.warning(f"转换图片到base64失败: {e}")
-                    except Exception as e:
-                        logger.error(f"处理图片时出现未预期的错误: {e}")
-                elif isinstance(comp, Reply):
-                    # 处理引用消息中的图片
-                    if comp.chain:
-                        for reply_comp in comp.chain:
-                            if isinstance(reply_comp, Image):
-                                try:
-                                    base64_data = await reply_comp.convert_to_base64()
-                                    input_images.append(base64_data)
-                                    logger.info("从引用消息中获取到图片")
-                                except (IOError, ValueError, OSError) as e:
-                                    logger.warning(f"转换引用消息中的图片到base64失败: {e}")
-                                except Exception as e:
-                                    logger.error(f"处理引用消息中的图片时出现未预期的错误: {e}")
 
-        # 检查是否找到图片
+        input_images = await self._collect_input_images(event)
+
         if not input_images:
             yield event.plain_result(
                 "请提供一张图片以进行手办化处理！\n发送图片后使用 /手办化 指令，或者回复包含图片的消息并使用 /手办化 指令。"
@@ -410,7 +409,6 @@ class MyPlugin(Star):
 
         logger.info(f"开始手办化处理，使用了 {len(input_images)} 张图片")
 
-        # 使用专门的手办化提示词
         figure_prompt = """Please accurately transform the main subject in this image into a realistic, masterpiece-quality 1/7 scale PVC figure.
 
 Specific Requirements:
@@ -444,11 +442,9 @@ Please ensure the final result looks like a real commercial figure product that 
                 yield event.chain_result(error_chain)
                 return
 
-            # 处理文件传输和图片发送
             if self.nap_server_address and self.nap_server_address != "localhost":
                 image_path = await send_file(image_path, HOST=self.nap_server_address, PORT=self.nap_server_port)
 
-            # 发送处理结果
             image_component = await self.send_image_with_callback_api(image_path)
             result_chain = [Plain("✨ 手办化处理完成！"), image_component]
             yield event.chain_result(result_chain)
@@ -464,6 +460,128 @@ Please ensure the final result looks like a real commercial figure product that 
         except Exception as e:
             logger.error(f"手办化处理过程出现未预期的错误: {e}")
             error_chain = [Plain(f"手办化处理失败: {str(e)}")]
+            yield event.chain_result(error_chain)
+
+    @filter.command("手办化2")
+    async def figure_transform_v2(self, event: AstrMessageEvent):
+        """手办化 2：顶级收藏级树脂手办风格。"""
+        if not self._is_group_allowed(event):
+            return
+
+        if not await self._check_and_consume_rate_limit(event):
+            yield event.plain_result("本群本周期内的插件调用次数已达上限，请稍后再试。")
+            return
+
+        input_images = await self._collect_input_images(event)
+
+        if not input_images:
+            yield event.plain_result(
+                "请提供一张图片以进行手办化处理！\n发送图片后使用 /手办化2 指令，或者回复包含图片的消息并使用 /手办化2 指令。"
+            )
+            return
+
+        logger.info(f"开始手办化2处理，使用了 {len(input_images)} 张图片")
+
+        figure_prompt = (
+            "将画面中的角色重塑为顶级收藏级树脂手办，全身动态姿势，置于角色主题底座，高精度材质，手工涂装，"
+            "肌肤纹理与服装材质真实分明。戏剧性硬光为主光源，凸显立体感，无过曝；强效补光消除死黑，细节完整可见。"
+            "背景为窗边景深模糊，侧后方隐约可见产品包装盒。博物馆级摄影质感，全身细节无损，面部结构精准。"
+            "禁止：任何2D元素或照搬原图、塑料感、面部模糊、五官错位、细节丢失。"
+        )
+
+        try:
+            image_url, image_path = await self._generate_image_via_provider(
+                figure_prompt,
+                input_images=input_images,
+            )
+
+            if not image_url or not image_path:
+                error_chain = [Plain("手办化2处理失败，请检查API配置和网络连接。")]
+                yield event.chain_result(error_chain)
+                return
+
+            if self.nap_server_address and self.nap_server_address != "localhost":
+                image_path = await send_file(image_path, HOST=self.nap_server_address, PORT=self.nap_server_port)
+
+            image_component = await self.send_image_with_callback_api(image_path)
+            result_chain = [Plain("✨ 手办化2处理完成！"), image_component]
+            yield event.chain_result(result_chain)
+
+        except (ConnectionError, TimeoutError) as e:
+            logger.error(f"网络连接错误导致手办化2处理失败: {e}")
+            error_chain = [Plain(f"网络连接错误，手办化2处理失败: {str(e)}")]
+            yield event.chain_result(error_chain)
+        except ValueError as e:
+            logger.error(f"参数错误导致手办化2处理失败: {e}")
+            error_chain = [Plain(f"参数错误，手办化2处理失败: {str(e)}")]
+            yield event.chain_result(error_chain)
+        except Exception as e:
+            logger.error(f"手办化2处理过程出现未预期的错误: {e}")
+            error_chain = [Plain(f"手办化2处理失败: {str(e)}")]
+            yield event.chain_result(error_chain)
+
+    @filter.command("手办化3")
+    async def figure_transform_v3(self, event: AstrMessageEvent):
+        """手办化 3：1/7 比例展示柜商业化手办风格。"""
+        if not self._is_group_allowed(event):
+            return
+
+        if not await self._check_and_consume_rate_limit(event):
+            yield event.plain_result("本群本周期内的插件调用次数已达上限，请稍后再试。")
+            return
+
+        input_images = await self._collect_input_images(event)
+
+        if not input_images:
+            yield event.plain_result(
+                "请提供一张图片以进行手办化处理！\n发送图片后使用 /手办化3 指令，或者回复包含图片的消息并使用 /手办化3 指令。"
+            )
+            return
+
+        logger.info(f"开始手办化3处理，使用了 {len(input_images)} 张图片")
+
+        figure_prompt = (
+            "Create a highly realistic 1/7 scale commercialized figure based on the illustration’s adult character, "
+            "ensuring the appearance and content are safe, healthy, and free from any inappropriate elements. "
+            "Render the figure in a detailed, lifelike style and environment, placed on a shelf inside an ultra-realistic "
+            "figure display cabinet, mounted on a circular transparent acrylic base without any text. Maintain highly precise "
+            "details in texture, material, and paintwork to enhance realism. The cabinet scene should feature a natural depth "
+            "of field with a smooth transition between foreground and background for a realistic photographic look. Lighting "
+            "should appear natural and adaptive to the scene, automatically adjusting based on the overall composition instead "
+            "of being locked to a specific direction, simulating the quality and reflection of real commercial photography. "
+            "Other shelves in the cabinet should contain different figures which are slightly blurred due to being out of focus, "
+            "enhancing spatial realism and depth."
+        )
+
+        try:
+            image_url, image_path = await self._generate_image_via_provider(
+                figure_prompt,
+                input_images=input_images,
+            )
+
+            if not image_url or not image_path:
+                error_chain = [Plain("手办化3处理失败，请检查API配置和网络连接。")]
+                yield event.chain_result(error_chain)
+                return
+
+            if self.nap_server_address and self.nap_server_address != "localhost":
+                image_path = await send_file(image_path, HOST=self.nap_server_address, PORT=self.nap_server_port)
+
+            image_component = await self.send_image_with_callback_api(image_path)
+            result_chain = [Plain("✨ 手办化3处理完成！"), image_component]
+            yield event.chain_result(result_chain)
+
+        except (ConnectionError, TimeoutError) as e:
+            logger.error(f"网络连接错误导致手办化3处理失败: {e}")
+            error_chain = [Plain(f"网络连接错误，手办化3处理失败: {str(e)}")]
+            yield event.chain_result(error_chain)
+        except ValueError as e:
+            logger.error(f"参数错误导致手办化3处理失败: {e}")
+            error_chain = [Plain(f"参数错误，手办化3处理失败: {str(e)}")]
+            yield event.chain_result(error_chain)
+        except Exception as e:
+            logger.error(f"手办化3处理过程出现未预期的错误: {e}")
+            error_chain = [Plain(f"手办化3处理失败: {str(e)}")]
             yield event.chain_result(error_chain)
 
     @filter.command("改图")
@@ -485,6 +603,7 @@ Please ensure the final result looks like a real commercial figure product that 
         if not await self._check_and_consume_rate_limit(event):
             yield event.plain_result("本群本周期内的插件调用次数已达上限，请稍后再试。")
             return
+
         use_reference = str(use_reference_images).lower() in {"true", "1", "yes", "y"}
 
         # NAP 文件转发配置
@@ -499,31 +618,9 @@ Please ensure the final result looks like a real commercial figure product that 
             else:
                 edit_description = ""
 
-        # 收集参考图片
-        input_images: list = []
+        input_images: list[str] = []
         if use_reference:
-            if hasattr(event, "message_obj") and event.message_obj and hasattr(event.message_obj, "message"):
-                for comp in event.message_obj.message:
-                    if isinstance(comp, Image):
-                        try:
-                            base64_data = await comp.convert_to_base64()
-                            input_images.append(base64_data)
-                        except (IOError, ValueError, OSError) as e:
-                            logger.warning(f"转换当前消息中的图片到base64失败: {e}")
-                        except Exception as e:
-                            logger.error(f"处理当前消息中的图片时出现未预期的错误: {e}")
-                    elif isinstance(comp, Reply):
-                        if comp.chain:
-                            for reply_comp in comp.chain:
-                                if isinstance(reply_comp, Image):
-                                    try:
-                                        base64_data = await reply_comp.convert_to_base64()
-                                        input_images.append(base64_data)
-                                        logger.info("从引用消息中获取到图片")
-                                    except (IOError, ValueError, OSError) as e:
-                                        logger.warning(f"转换引用消息中的图片到base64失败: {e}")
-                                    except Exception as e:
-                                        logger.error(f"处理引用消息中的图片时出现未预期的错误: {e}")
+            input_images = await self._collect_input_images(event)
 
         if not input_images:
             yield event.plain_result("请先发送一张图片，或回复包含图片的消息后再使用 /改图 指令。")
@@ -560,3 +657,19 @@ Please ensure the final result looks like a real commercial figure product that 
             logger.error(f"改图过程出现未预期的错误: {e}")
             error_chain = [Plain(f"改图失败: {str(e)}")]
             yield event.chain_result(error_chain)
+
+    @filter.command("img帮助")
+    async def img_help(self, event: AstrMessageEvent):
+        """列出本插件支持的图像相关指令。"""
+        if not self._is_group_allowed(event):
+            return
+
+        lines = [
+            "本插件支持的图像相关指令：",
+            "/生图 文本 —— 根据文字描述生成图片",
+            "/手办化 + 图片 —— 将图片转换为 PVC 手办风格",
+            "/手办化2 + 图片 —— 顶级收藏级树脂手办风格",
+            "/手办化3 + 图片 —— 1/7 比例展示柜商业化手办风格",
+            "/改图 + 图片 —— 基于已有图片进行改图",
+        ]
+        yield event.plain_result("\n".join(lines))

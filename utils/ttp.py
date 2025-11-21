@@ -1,4 +1,3 @@
-import random
 import aiohttp
 import asyncio
 import aiofiles
@@ -74,8 +73,15 @@ async def cleanup_old_images(data_dir=None):
         current_time = datetime.now()
         cutoff_time = current_time - timedelta(minutes=15)
 
-        # 查找images目录下的所有图像文件
-        image_patterns = ["gemini_image_*.png", "gemini_image_*.jpg", "gemini_image_*.jpeg"]
+        # 查找images目录下的所有图像文件（兼容不同前缀）
+        image_patterns = [
+            "gemini_image_*.png",
+            "gemini_image_*.jpg",
+            "gemini_image_*.jpeg",
+            "openai_image_*.png",
+            "openai_image_*.jpg",
+            "openai_image_*.jpeg",
+        ]
 
         for pattern in image_patterns:
             for file_path in images_dir.glob(pattern):
@@ -465,83 +471,11 @@ async def generate_image_openai(
 
 async def generate_image(prompt, api_key, model="stabilityai/stable-diffusion-3-5-large", seed=None, image_size="1024x1024"):
     """
-    生成图像使用SiliconFlow API
-    
-    Args:
-        prompt (str): 图像生成提示
-        api_key (str): API密钥
-        model (str): 模型名称
-        seed (int): 随机种子
-        image_size (str): 图像尺寸
-        
-    Returns:
-        tuple: (image_url, image_path) or (None, None) if failed
+    已废弃：旧的 SiliconFlow 图像生成接口。
+
+    为兼容历史调用保留空壳实现，统一返回失败并记录日志。
     """
-    url = "https://api.siliconflow.cn/v1/images/generations"
-
-    if seed is None:
-        seed = random.randint(0, 9999999999)
-
-    payload = {
-        "model": model,
-        "prompt": prompt,
-        "image_size": image_size,
-        "seed": seed
-    }
-    headers = {
-        "Authorization": "Bearer " + api_key,
-        "Content-Type": "application/json"
-    }
-
-    max_retries = 10  # 最大重试次数
-    retry_count = 0
-    
-    timeout = aiohttp.ClientTimeout(total=60)
-    async with aiohttp.ClientSession(timeout=timeout) as session:
-        while retry_count < max_retries:
-            try:
-                async with session.post(url, json=payload, headers=headers) as response:
-                    data = await response.json()
-
-                    if data.get("code") == 50603:
-                        logger.warning("系统繁忙，1秒后重试")
-                        await asyncio.sleep(1)
-                        retry_count += 1
-                        continue
-
-                    if "images" in data:
-                        for image in data["images"]:
-                            image_url = image["url"]
-                            async with session.get(image_url) as img_response:
-                                if img_response.status == 200:
-                                    # 生成唯一文件名
-                                    script_dir = Path(__file__).parent.parent
-                                    images_dir = script_dir / "images"
-                                    images_dir.mkdir(exist_ok=True)
-                                    
-                                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                                    unique_id = str(uuid.uuid4())[:8]
-                                    image_path = images_dir / f"siliconflow_image_{timestamp}_{unique_id}.jpeg"
-                                    
-                                    async with aiofiles.open(image_path, "wb") as f:
-                                        await f.write(await img_response.read())
-                                    
-                                    logger.info(f"图像已下载: {image_url} -> {image_path}")
-                                    return image_url, str(image_path)
-                                else:
-                                    logger.error(f"下载图像失败: {image_url}")
-                                    return None, None
-                    else:
-                        logger.warning("响应中未找到图像")
-                        return None, None
-                        
-            except (aiohttp.ClientError, asyncio.TimeoutError) as e:
-                logger.error(f"网络请求失败 (重试 {retry_count + 1}/{max_retries}): {e}")
-                retry_count += 1
-                if retry_count < max_retries:
-                    await asyncio.sleep(2 ** retry_count)  # 指数退避
-                else:
-                    return None, None
-                    
-    logger.error(f"达到最大重试次数 ({max_retries})，生成失败")
+    logger.warning(
+        "generate_image 已废弃，请使用 generate_image_openai，并通过兼容网关接入第三方服务。"
+    )
     return None, None
