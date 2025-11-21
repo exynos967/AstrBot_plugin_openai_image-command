@@ -1,40 +1,76 @@
 {
-    "openrouter_api_keys": {
-        "description": "OpenRouter API 密钥列表",
+    "openai_api_key": {
+        "description": "OpenAI API 密钥列表",
         "type": "list",
-        "hint": "请前往 https://openrouter.ai/ 注册账号，并获取多个 OpenRouter API Key。支持多个密钥自动轮换，当一个密钥额度耗尽时会自动切换到下一个",
-        "default": ["OpenRouter_API_Key_1", "OpenRouter_API_Key_2"],
+        "hint": "可配置一个或多个 OpenAI API Key；如只需一个可仅填写单项。",
+        "default": [],
         "obvious_hint": true
     },
-    "custom_api_base": {
-        "description": "自定义 API Base URL（可选，没有特殊需求别填）",
+    "openai_api_base": {
+        "description": "OpenAI API Base URL",
         "type": "string",
-        "hint": "自定义的 API 基础地址，如果不填写则使用默认的 OpenRouter API 地址。例如：https://api.openrouter.ai 或其他兼容的API地址",
-        "default": "",
+        "hint": "默认为 https://api.openai.com，如使用代理或兼容网关可在此修改。",
+        "default": "https://api.openai.com",
         "obvious_hint": false
     },
-    "model_name": {
-        "description": "使用的模型名称",
+    "api_format": {
+        "description": "后端接口格式",
         "type": "string",
-        "hint": "OpenRouter 支持的图像生成模型，例如：google/gemini-2.5-flash-image-preview:free（默认免费模型）、google/gemini-2.0-flash-exp:free、openai/gpt-4o 等",
-        "default": "google/gemini-2.5-flash-image-preview:free",
+        "hint": "非必要不要使用gemini格式！",
+        "default": "openai",
+        "options": ["openai", "gemini"],
+        "obvious_hint": true
+    },
+    "model_name": {
+        "description": "使用的 OpenAI 图像模型名称",
+        "type": "string",
+        "hint": "例如：gpt-image-1 或其他支持 /v1/images/generations 的模型",
+        "default": "gpt-image-1",
         "obvious_hint": true
     },
     "max_retry_attempts": {
-        "description": "每个API密钥的最大重试次数",
+        "description": "OpenAI 图像请求的最大重试次数",
         "type": "int",
-        "hint": "当API请求失败时，每个密钥最多重试几次。设置为1表示不重试，直接切换密钥。推荐2-5次，设置过高可能导致响应时间过长",
+        "hint": "当 API 请求失败时最多重试几次。推荐 2-5 次，设置过高可能导致响应时间过长",
         "default": 3,
         "obvious_hint": true
     },
     "nap_server_address": {
-        "description": "（没特殊需求别改，仅当nap和bot不在一个服务器时填写，需配合文件接收脚本）NAP cat 服务地址,若与服务器在同一服务器上请填写localhost",
+        "description": "NAPcat 服务地址，若与服务器在同一服务器上请填写 localhost",
         "type": "string",
         "default": "localhost"
     },
     "nap_server_port": {
-        "description": "（没特殊需求别改，仅当nap和bot不在一个服务器时填写，需配合文件接收脚本）NAP cat 所处服务器接收文件端口，在同一服务器上可以不填",
+        "description": "NAPcat 所处服务器接收文件端口，在同一服务器上可以不填",
         "type": "int",
         "default": 3658
+    },
+    "group_whitelist": {
+        "description": "群白名单（仅这些群可使用插件指令）",
+        "type": "list",
+        "hint": "填写群号字符串列表；留空表示不过滤。",
+        "default": [],
+        "obvious_hint": false
+    },
+    "group_blacklist": {
+        "description": "群黑名单（这些群将被屏蔽，不响应指令）",
+        "type": "list",
+        "hint": "填写群号字符串列表；留空表示不过滤。",
+        "default": [],
+        "obvious_hint": false
+    },
+    "rate_limit_max_calls_per_group": {
+        "description": "单群调用次数上限（每周期）",
+        "type": "int",
+        "hint": "0 表示不启用限流；大于 0 时，一个群在一个周期内最多可调用的指令次数。",
+        "default": 0,
+        "obvious_hint": false
+    },
+    "rate_limit_period_seconds": {
+        "description": "限流周期长度（秒）",
+        "type": "int",
+        "hint": "与单群调用次数上限配合使用，默认为 60 秒。",
+        "default": 60,
+        "obvious_hint": false
     }
 }

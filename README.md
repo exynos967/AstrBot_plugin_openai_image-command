@@ -1,13 +1,11 @@
-# AstrBot Gemini 2.5 图像生成插件
+# AstrBot OpenAI 图像生成插件
 
-基于 OpenRouter API 的 AstrBot 图像生成插件，使用 Google Gemini 2.5 Flash 模型免费生成高质量图像。
+基于 OpenAI Images API 的 AstrBot 图像生成插件，使用 OpenAI 官方图片模型（如 `gpt-image-1`）生成高质量图像。
 
 ## 功能特点
 
-- 🎨 **免费图像生成**: 使用 OpenRouter 的免费 Gemini 2.5 Flash 模型
-- 🔧 **自定义模型支持**: 可配置使用任何 OpenRouter 平台支持的图像生成模型
-- ️ **参考图片支持**: 支持基于用户提供的图片进行生成或修改
-- 🔑 **多API密钥支持**: 支持配置多个API密钥，自动轮换避免额度耗尽
+- 🖼️ **OpenAI 官方生图支持**: 使用 OpenAI Images API（如 `gpt-image-1`）生成图片
+- ️ **参考图片支持（占位，当前忽略）**: 插件仍会尝试从消息中收集图片，但在当前 OpenAI 实现中仅记录日志，不参与生成
 - ♻️ **智能重试机制**: 支持可配置的自动重试，提高请求成功率和稳定性
 - 🚀 **异步处理**: 基于 asyncio 的高性能异步图像生成
 - 🔗 **智能文件传输**: 支持本地和远程服务器的文件传输
@@ -19,88 +17,46 @@
 
 ### 1. 获取 API Key
 
-前往 [OpenRouter](https://openrouter.ai/) 注册账号并获取 API Key。
+前往 [OpenAI](https://platform.openai.com/) 创建 API Key。
 
 ### 2. 配置参数
 
-#### 通过Web界面配置（推荐）
+#### 通过Web界面配置
 
 1. 访问AstrBot的Web管理界面
 2. 进入"插件管理"页面
-3. 找到"Gemini 2.5 Image OpenRouter"插件  
+3. 找到插件  
 4. 点击"配置"按钮进行可视化配置
 
 #### 配置参数说明
 
-- **openrouter_api_keys**: OpenRouter API 密钥列表（支持多个密钥自动轮换）
-- **model_name**: 使用的模型名称（默认：google/gemini-2.5-flash-image-preview:free）
-- **max_retry_attempts**: 每个API密钥的最大重试次数（默认：3次，推荐2-5次）
-- **custom_api_base**: 自定义 API Base URL（可选，没有特殊需求别填）
+- **openai_api_key**: OpenAI API 密钥列表。支持配置一个或多个 Key：
+  - 如只需一个 Key，可在配置界面仅填写单项；
+  - 如需多 Key 轮换或分账号使用，可填写多项。插件内部会将旧版本中单字符串配置自动转换为列表。
+- **openai_api_base**: OpenAI API Base URL，默认 `https://api.openai.com`
+- **model_name**: 使用的 OpenAI 图像模型名称，例如 `gpt-image-1` 或其他支持 `/v1/images/generations` 的模型
+- **max_retry_attempts**: 每个请求的最大重试次数（默认：3 次，推荐 2-5 次）
 - **nap_server_address**: NAP cat 服务地址（同服务器填写 `localhost`）
 - **nap_server_port**: 文件传输端口（默认 3658）
-
-## 使用方法
-
-### LLM 工具调用
-
-插件注册了一个名为 `gemini-pic-gen` 的 LLM 工具，支持以下参数：
-
-- `image_description`: 图像生成或修改描述（必需）
-- `use_reference_images`: 是否使用用户消息中的图片作为参考（默认为 True）
-
-### 智能重试机制
-
-插件内置了双层重试机制，提高图像生成的成功率：
-
-#### 重试策略
-- **API密钥轮换**: 当一个API密钥失败时，自动切换到下一个可用密钥
-- **单密钥重试**: 对每个API密钥都会进行用户配置次数的重试
-- **智能错误分类**: 额度/速率限制错误直接切换密钥，网络/临时错误进行重试
-- **指数退避**: 重试间隔2秒→4秒→8秒，最大10秒
-
-#### 总重试次数计算
-```
-总重试次数 = API密钥数量 × max_retry_attempts
-```
-
-例如：3个API密钥，每个重试3次 = 最多9次尝试
-
-### 使用场景
-
-插件支持以下使用场景：
-- **纯文本生成图像**: 直接通过文字描述生成图片
-- **基于参考图片生成/修改**: 上传图片后，可以基于该图片进行修改或生成新图片
-- **智能参考控制**: 插件会自动判断是否使用参考图片
+- **group_whitelist**: 群白名单。配置后仅白名单内的群可以使用本插件的指令；为空则不启用白名单过滤。
+- **group_blacklist**: 群黑名单。配置后黑名单内的群不会响应本插件指令；如同时配置白名单，则以白名单优先。
+- **rate_limit_max_calls_per_group**: 单群在一个限流周期内允许调用插件指令的最大次数。设置为 `0` 表示不启用限流。
+- **rate_limit_period_seconds**: 限流周期长度（秒），与 `rate_limit_max_calls_per_group` 搭配使用，默认 `60` 秒。
 
 ## 技术实现
 
 ### 核心组件
 
 - **main.py**: 插件主要逻辑，继承自 AstrBot 的 Star 类
-- **utils/ttp.py**: OpenRouter API 调用和图像处理逻辑
+- **utils/ttp.py**: OpenAI Images API 调用和图像处理逻辑
 - **utils/file_send_server.py**: 文件传输服务器通信
-
-### 工作流程
-
-1. 接收用户的图像生成请求和可选的参考图片
-2. 根据 `use_reference_images` 参数决定是否使用参考图片
-3. 构建多模态请求消息（文本+图片）发送到 OpenRouter API
-4. 调用 Gemini 2.5 Flash 模型进行图像生成或修改
-5. 解析返回的 base64 图像数据
-6. 自动清理超过15分钟的历史图像文件
-7. 保存新生成的图像到本地文件系统
-8. 通过文件传输服务发送图像（如需要）
-9. 返回图像链到聊天
 
 ### 支持的模型
 
-插件支持配置任何 OpenRouter 平台上可用的图像生成模型，包括但不限于：
+插件支持配置多种 OpenAI 图像生成模型，包括但不限于：
 
-- `google/gemini-2.5-flash-image-preview:free`（默认免费模型）
-- `google/gemini-2.0-flash-exp:free`
-- `openai/gpt-4o`
-- `anthropic/claude-3.5-sonnet`
-- 其他支持图像生成的 OpenRouter 模型
+- `gpt-image-1`
+- 其他支持 `/v1/images/generations` 接口的 OpenAI 模型
 
 您可以在插件的配置文件中的 `model_name` 字段指定要使用的模型。
 
@@ -112,7 +68,7 @@ AstrBot_plugin_gemini2.5image-openrouter/
 ├── metadata.yaml          # 插件元数据
 ├── _conf_schema.json      # 配置模式定义
 ├── utils/
-│   ├── ttp.py            # OpenRouter API 调用
+│   ├── ttp.py            # openai兼容 API 调用
 │   └── file_send_server.py # 文件传输工具
 ├── images/               # 生成的图像存储目录
 ├── LICENSE              # 许可证文件
@@ -123,40 +79,9 @@ AstrBot_plugin_gemini2.5image-openrouter/
 
 插件包含完善的错误处理机制：
 
-- **API 调用失败处理**: 详细的 OpenRouter API 错误信息记录
+- **API 调用失败处理**: 记录详细的 OpenAI API 错误信息
 - **Base64 图像解码错误处理**: 自动检测和修复格式问题
 - **参考图片处理异常捕获**: 当参考图片转换失败时的回退机制
 - **文件传输异常捕获**: 网络传输失败时的错误提示
 - **自动清理失败处理**: 清理历史文件时的异常保护
 - **详细的错误日志输出**: 便于调试和问题定位
-
-## 版本信息
-
-- **当前版本**: v1.8.1
-- **更新内容**:
-  - ✨ 新增智能重试机制，支持用户可配置的重试次数
-  - 🔧 添加Web界面可视化配置支持
-  - ♻️ 实现双层重试策略（API密钥轮换+单密钥重试）  
-  - 📊 改进错误分类和指数退避算法
-  - 📝 完善配置文档和使用说明
-  - 🐛 新增自定义模型配置功能，支持配置不同的 OpenRouter 模型
-  - 🔑 优化API密钥管理，支持多个密钥自动轮换
-  - 🛡️ 改进错误处理和日志记录
-  - 📸 新增参考图片支持功能
-  - 🏷️ 优化LLM工具名称为 `gemini-pic-gen`
-  - 🧹 添加自动清理机制
-
-## 开发信息
-
-- **作者**: 喵喵
-- **版本**: v1.8.1
-- **许可证**: 见 LICENSE 文件
-- **项目地址**: [GitHub Repository](https://github.com/miaoxutao123/AstrBot_plugin_gemini2point5image-openrouter)
-
-## 贡献
-
-欢迎提交 Issue 和 Pull Request 来改进这个插件。
-
-## 许可证
-
-本项目采用开源许可证，详见 LICENSE 文件。
