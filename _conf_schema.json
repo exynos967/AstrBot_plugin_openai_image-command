@@ -45,17 +45,18 @@
         "type": "int",
         "default": 3658
     },
-    "group_whitelist": {
-        "description": "群白名单（仅这些群可使用插件指令）",
-        "type": "list",
-        "hint": "填写群号字符串列表；留空表示不过滤。",
-        "default": [],
+    "group_filter_mode": {
+        "description": "群过滤模式",
+        "type": "string",
+        "hint": "whitelist: 仅名单内群可用；blacklist: 名单内群禁用；none: 不过滤。",
+        "default": "none",
+        "options": ["none", "whitelist", "blacklist"],
         "obvious_hint": false
     },
-    "group_blacklist": {
-        "description": "群黑名单（这些群将被屏蔽，不响应指令）",
+    "group_filter_list": {
+        "description": "群过滤名单（根据模式作为白名单或黑名单）",
         "type": "list",
-        "hint": "填写群号字符串列表；留空表示不过滤。",
+        "hint": "填写群号字符串列表。",
         "default": [],
         "obvious_hint": false
     },

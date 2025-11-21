@@ -38,8 +38,14 @@
 - **max_retry_attempts**: 每个请求的最大重试次数（默认：3 次，推荐 2-5 次）
 - **nap_server_address**: NAP cat 服务地址（同服务器填写 `localhost`）
 - **nap_server_port**: 文件传输端口（默认 3658）
-- **group_whitelist**: 群白名单。配置后仅白名单内的群可以使用本插件的指令；为空则不启用白名单过滤。
-- **group_blacklist**: 群黑名单。配置后黑名单内的群不会响应本插件指令；如同时配置白名单，则以白名单优先。
+- **group_filter_mode**: 群过滤模式，可选 `none` / `whitelist` / `blacklist`：
+  - `none`: 不做群过滤（默认）；
+  - `whitelist`: 仅名单内群允许使用插件指令；
+  - `blacklist`: 名单内群不会响应插件指令。
+- **group_filter_list**: 群过滤名单（字符串列表）。结合 `group_filter_mode` 使用：
+  - 当为 `whitelist` 时，列表作为白名单；
+  - 当为 `blacklist` 时，列表作为黑名单；
+  - `none` 时此列表不生效。
 - **rate_limit_max_calls_per_group**: 单群在一个限流周期内允许调用插件指令的最大次数。设置为 `0` 表示不启用限流。
 - **rate_limit_period_seconds**: 限流周期长度（秒），与 `rate_limit_max_calls_per_group` 搭配使用，默认 `60` 秒。
 

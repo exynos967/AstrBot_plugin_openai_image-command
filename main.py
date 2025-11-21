@@ -9,7 +9,7 @@ from .utils.ttp import generate_image_openai
 from .utils.file_send_server import send_file
 
 
-@register("astrbot_plugin_openai_image-command", "薄暝", "使用 OpenAI 的图片接口生成图片", "2.0.0")
+@register("astrbot_plugin_openai_image-command", "薄暝", "使用 OpenAI 的图片接口生成图片", "2.1.0")
 class MyPlugin(Star):
     def __init__(self, context: Context, config: dict):
         super().__init__(context)
@@ -30,9 +30,9 @@ class MyPlugin(Star):
         self.nap_server_address = config.get("nap_server_address")
         self.nap_server_port = config.get("nap_server_port")
 
-        # 群过滤配置
-        self.group_whitelist = self._normalize_id_list(config.get("group_whitelist"))
-        self.group_blacklist = self._normalize_id_list(config.get("group_blacklist"))
+        # 群过滤配置（模式 + 名单）
+        self.group_filter_mode = str(config.get("group_filter_mode", "none") or "none").strip().lower()
+        self.group_filter_list = self._normalize_id_list(config.get("group_filter_list"))
 
         # 限流配置（按群）
         self.rate_limit_max_calls_per_group = int(config.get("rate_limit_max_calls_per_group", 0) or 0)
@@ -215,10 +215,10 @@ class MyPlugin(Star):
         """
         判断当前事件所在群是否允许使用插件指令。
 
-        优先级：
-        - 若配置了白名单，则仅白名单内群允许；
-        - 否则若配置了黑名单，则黑名单内群禁止；
-        - 若都未配置，则所有群允许。
+        通过 group_filter_mode + group_filter_list 控制：
+        - mode = whitelist: 仅名单内群允许；
+        - mode = blacklist: 名单内群禁止；
+        - mode = none 或其他: 不做群过滤。
         """
         group_id = None
         try:
@@ -231,17 +231,23 @@ class MyPlugin(Star):
             return True
 
         gid = str(group_id)
+        mode = self.group_filter_mode or "none"
 
-        if self.group_whitelist:
-            allowed = gid in self.group_whitelist
+        if mode == "whitelist":
+            allowed = gid in self.group_filter_list
             if not allowed:
                 logger.info(f"群 {gid} 不在白名单中，忽略指令")
             return allowed
 
-        if self.group_blacklist and gid in self.group_blacklist:
-            logger.info(f"群 {gid} 命中黑名单，忽略指令")
-            return False
+        if mode == "blacklist":
+            if gid in self.group_filter_list:
+                logger.info(f"群 {gid} 命中黑名单，忽略指令")
+                return False
+            return True
 
+        # none 或未知值：不做过滤
+        if mode not in {"none", "whitelist", "blacklist"}:
+            logger.warning(f"未知的 group_filter_mode={mode}，按 none 处理")
         return True
 
     async def _check_and_consume_rate_limit(self, event: AstrMessageEvent) -> bool:
